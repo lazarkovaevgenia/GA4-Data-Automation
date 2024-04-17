@@ -1,0 +1,90 @@
+pip install requests pandas openpyxl   ##library used for reading and writing Excel files
+pip install --upgrade google-auth google-auth-oauthlib google-auth-httplib2 pandas openpyxl    #The overall purpose of this command is to ensure that you have the necessary libraries 
+                                          updated and ready for tasks that involve interacting with Google APIs, handling OAuth flows, processing data, and working with Excel files using Python.
+pip install google-analytics-data    #provides client libraries to access the Google Analytics Data API.
+
+
+from google.oauth2.service_account import Credentials
+from google.analytics.data_v1beta import BetaAnalyticsDataClient
+from google.analytics.data_v1beta.types import RunReportRequest, DateRange, Metric, Dimension
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+# Path to your service account key file
+key_path = "/path/acoustic-garden-317516-a6e925691208.json"
+
+# Initialize credentials and client
+credentials = Credentials.from_service_account_file(key_path)
+analytics_client = BetaAnalyticsDataClient(credentials=credentials)
+
+# Function to fetch data from GA4
+def fetch_ga4_data(property_id):
+    request = RunReportRequest(
+        property=f"properties/{property_id}",
+        dimensions=[
+            Dimension(name="deviceCategory")
+        ],
+        metrics=[
+            Metric(name="totalUsers"),  # Total Users
+            Metric(name="sessions"),  # Sessions
+            Metric(name="newUsers"),  # New Users
+            Metric(name="engagementRate"),  # Engagement Rate
+            Metric(name="ecommercePurchases"),  # Purchases
+            Metric(name="eventsPerSession"),  # Events per Session
+            Metric(name="sessionConversionRate"),  # Sessions Conversion Rate
+        ],
+        date_ranges=[DateRange(start_date="2024-01-01", end_date="today")]
+    )
+    response = analytics_client.run_report(request)
+    return response
+
+# Example GA4 property ID, replace with your actual property ID
+property_id = '251793416'
+
+# Fetching the data
+response = fetch_ga4_data(property_id)
+
+# Processing the data
+data = []
+for row in response.rows:
+    device_category = row.dimension_values[0].value
+    if device_category in ['desktop', 'mobile']:  # Filter to only include desktop and mobile
+        row_data = {
+            'Device category': device_category,
+            'Total users': row.metric_values[0].value,
+            'Sessions': row.metric_values[1].value,
+            'New users': row.metric_values[2].value,
+            'Engagement rate': f"{float(row.metric_values[3].value) * 100:.2f}%",
+            'Purchases': row.metric_values[4].value,
+            'Events per session': f"{float(row.metric_values[5].value):.2f}",
+            'Sessions Conversion Rate': f"{float(row.metric_values[6].value) * 100:.2f}%"
+        }
+        data.append(row_data)
+
+# Convert the list of dictionaries to a DataFrame
+df = pd.DataFrame(data)
+
+# Initialize a new workbook and select the active worksheet
+wb = Workbook()
+ws = wb.active
+
+# Convert DataFrame to rows in the worksheet, include index and headers
+for r_idx, row in enumerate(dataframe_to_rows(df, index=False, header=True), 1):
+    for c_idx, value in enumerate(row, 1):
+        cell = ws.cell(row=r_idx, column=c_idx, value=value)
+        if r_idx == 1:  # Apply styles to header row
+            cell.font = Font(bold=True, color='000000')  # Black text
+            cell.fill = PatternFill(start_color='BDD7EE', end_color='BDD7EE', fill_type="solid")
+            cell.alignment = Alignment(wrap_text=True)
+        # Set borders for all cells
+        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'),
+                             top=Side(style='thin'), bottom=Side(style='thin'))
+        cell.border = thin_border
+
+# Save the workbook
+file_path = 'formatted_ga4_metrics_report.xlsx'
+wb.save(file_path)
+
+print(f"Data has been successfully fetched, formatted, and written to '{file_path}'")
