@@ -1,0 +1,56 @@
+pip install requests pandas openpyxl  #library used for reading and writing Excel files
+pip install --upgrade google-auth google-auth-oauthlib google-auth-httplib2 pandas openpyxl    #The overall purpose of this command is to ensure that you have the necessary libraries updated and ready for tasks that involve interacting with Google APIs, handling OAuth flows, processing data, and working with Excel files using Python. 
+pip install google-analytics-data   #provides client libraries to access the Google Analytics Data API.
+
+from google.oauth2.service_account import Credentials
+from google.analytics.data_v1beta import BetaAnalyticsDataClient
+from google.analytics.data_v1beta.types import RunReportRequest, DateRange, Metric, Dimension
+import pandas as pd
+
+# Path to our service account key file
+key_path = "/path/to/your/service/account/doc.json"
+
+# Initialize credentials and client
+credentials = Credentials.from_service_account_file(key_path)
+analytics_client = BetaAnalyticsDataClient(credentials=credentials)
+
+# Function to fetch data from GA4
+def fetch_ga4_data(property_id):
+    request = RunReportRequest(
+        property=f"properties/{property_id}",
+        dimensions=[
+            Dimension(name="pagePath"),
+            Dimension(name="deviceCategory")
+        ],
+        metrics=[
+            Metric(name="activeUsers"),
+            Metric(name="newUsers")
+        ],
+        date_ranges=[DateRange(start_date="2023-01-01", end_date="today")]
+    )
+    response = analytics_client.run_report(request)
+    return response
+
+# Replace with your actual property ID
+property_id = 'your_ga4_property_id_here'
+
+# Fetching the data
+response = fetch_ga4_data(property_id)
+
+# Processing the data
+data = []
+for row in response.rows:
+    row_data = {}
+    for dimension_value, dimension_header in zip(row.dimension_values, response.dimension_headers):
+        row_data[dimension_header.name] = dimension_value.value
+    for metric_value, metric_header in zip(row.metric_values, response.metric_headers):
+        row_data[metric_header.name] = metric_value.value
+    data.append(row_data)
+
+# Convert the list of dictionaries to a DataFrame
+df = pd.DataFrame(data)
+
+# Export the DataFrame to an Excel file
+df.to_excel('ga4_metrics_report.xlsx', engine='openpyxl')
+
+print("Data has been successfully fetched and written to 'ga4_metrics_report.xlsx'")
