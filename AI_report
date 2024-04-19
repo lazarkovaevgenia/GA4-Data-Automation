@@ -1,0 +1,99 @@
+from google.oauth2.service_account import Credentials
+from google.analytics.data_v1beta import BetaAnalyticsDataClient
+from google.analytics.data_v1beta.types import RunReportRequest, DateRange, Metric, Dimension
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+# Path to your service account key file
+key_path = "/Users/lazarkovaevgenia/desktop/Rprojects/acoustic-garden-317516-a6e925691208.json"
+
+# Initialize credentials and client
+credentials = Credentials.from_service_account_file(key_path)
+analytics_client = BetaAnalyticsDataClient(credentials=credentials)
+
+# Function to fetch data from GA4
+def fetch_ga4_data(property_id, dimensions, metrics, limit=None):
+    request = RunReportRequest(
+        property=f"properties/{property_id}",
+        dimensions=[Dimension(name=dim) for dim in dimensions],
+        metrics=[Metric(name=met) for met in metrics],
+        date_ranges=[DateRange(start_date="2024-01-01", end_date="today")]
+    )
+    response = analytics_client.run_report(request)
+    data = []
+    for index, row in enumerate(response.rows):
+        if limit and index >= limit:
+            break
+        row_data = {}
+        for i, dim in enumerate(dimensions):
+            row_data[dim.replace('unifiedPagePathScreen', 'Page path')] = row.dimension_values[i].value  # Customize names
+        for i, met in enumerate(metrics):
+            if met == 'itemRevenue':
+                row_data['Item Revenue'] = f"${float(row.metric_values[i].value):,.2f}"
+            elif met == 'eventsPerSession':
+                row_data['Events per session'] = f"{float(row.metric_values[i].value):.2f}"
+            elif met == 'engagementRate':
+                row_data['Engagement Rate'] = f"{float(row.metric_values[i].value) * 100:.2f}%"
+            elif met == 'bounceRate':
+                row_data['Bounce Rate'] = f"{float(row.metric_values[i].value) * 100:.2f}%"
+            elif met == 'sessionConversionRate':
+                row_data['Session Conversion Rate'] = f"{float(row.metric_values[i].value) * 100:.2f}%"
+            else:
+                row_data[met.replace('newUsers', 'New users').replace('totalUsers', 'Total users').replace('sessions', 'Sessions').replace('ecommercePurchases', 'Purchases').replace('itemsPurchased', 'Items purchased')] = row.metric_values[i].value
+        data.append(row_data)
+    return data
+
+# Define GA4 property ID
+property_id = '280194443'
+
+# Data collection setups with specific tab names
+setups = [
+    (["unifiedPagePathScreen"], ["totalUsers", "newUsers", "sessions", "bounceRate", "eventsPerSession", "ecommercePurchases", "sessionConversionRate"], "All Pages"),
+    (["deviceCategory"], ["totalUsers", "sessions", "newUsers", "engagementRate", "ecommercePurchases", "eventsPerSession", "sessionConversionRate"], "Device Category"),
+    (["deviceCategory", "sessionDefaultChannelGroup"], ["totalUsers", "sessions", "engagementRate", "ecommercePurchases", "sessionConversionRate"], "Device & Channel"),
+    (["landingPagePlusQueryString"], ["totalUsers", "sessions", "bounceRate", "eventsPerSession", "ecommercePurchases", "sessionConversionRate"], "Landing Pages"),
+    (["operatingSystem"], ["totalUsers", "sessions", "engagementRate", "eventsPerSession", "ecommercePurchases", "sessionConversionRate"], "Operating Systems"),
+    (["sessionSource", "sessionMedium"], ["totalUsers", "sessions", "engagementRate", "ecommercePurchases", "sessionConversionRate"], "Sources & Mediums"),
+    (["itemName"], ["totalUsers", "sessions", "engagementRate", "itemsPurchased", "itemRevenue", "sessionConversionRate"], "Item Performance")
+]
+
+# Initialize a new workbook
+wb = Workbook()
+ws = None
+
+# Loop through setups and process each
+for idx, setup in enumerate(setups):
+    dimensions, metrics, sheet_name = setup
+    data = fetch_ga4_data(property_id, dimensions, metrics, 10)
+    df = pd.DataFrame(data)
+
+    # Create a sheet for each setup
+    ws = wb.create_sheet(title=sheet_name) if idx > 0 else wb.active
+    ws.title = sheet_name
+
+    # Convert DataFrame to rows in the worksheet, include index and headers
+    for r_idx, row in enumerate(dataframe_to_rows(df, index=False, header=True), 1):
+        for c_idx, value in enumerate(row, 1):
+            cell = ws.cell(row=r_idx, column=c_idx, value=value)
+            if r_idx == 1:  # Apply styles to header row
+                cell.font = Font(bold=True, color='000000')
+                cell.fill = PatternFill(start_color='BDD7EE', end_color='BDD7EE', fill_type="solid")
+                cell.alignment = Alignment(horizontal='center', wrap_text=True)
+            thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+            cell.border = thin_border
+
+# Auto-size columns for each sheet
+for sheet in wb.sheetnames:
+    ws = wb[sheet]
+    for column in ws.columns:
+        max_length = max(len(str(cell.value)) for cell in column)
+        adjusted_width = (max_length + 2)
+        ws.column_dimensions[column[0].column_letter].width = adjusted_width
+
+# Save the workbook
+file_path = 'unified_ga4_metrics_report.xlsx'
+wb.save(file_path)
+
+print(f"Data has been successfully fetched, formatted, and written to '{file_path}'")
