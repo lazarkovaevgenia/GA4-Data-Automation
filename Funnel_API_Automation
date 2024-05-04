@@ -1,0 +1,137 @@
+from google.analytics.data_v1alpha import AlphaAnalyticsDataClient
+from google.analytics.data_v1alpha.types import (
+    DateRange,
+    Dimension,
+    Funnel,
+    FunnelBreakdown,
+    FunnelEventFilter,
+    FunnelFieldFilter,
+    FunnelFilterExpression,
+    FunnelFilterExpressionList,
+    FunnelStep,
+    RunFunnelReportRequest,
+    StringFilter,
+)
+import pandas as pd
+import os
+import csv
+import itertools
+
+def run_sample():
+    """Runs the sample."""
+    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '/Users/file.json'
+    property_id = "XXXXXXXXX"
+    run_funnel_report(property_id)
+
+def run_funnel_report(property_id="XXXXXXXX"):
+    client = AlphaAnalyticsDataClient()
+
+    request = RunFunnelReportRequest(
+        property=f"properties/{property_id}",
+        date_ranges=[DateRange(start_date="2024-02-01", end_date="2024-02-01")],
+        funnel_breakdown=FunnelBreakdown(
+            breakdown_dimension=Dimension(name="deviceCategory")
+        ),
+        funnel=Funnel(
+            steps=[
+                FunnelStep(
+                    name="First open/visit",
+                    filter_expression=FunnelFilterExpression(
+                        or_group=FunnelFilterExpressionList(
+                            expressions=[
+                                FunnelFilterExpression(
+                                    funnel_event_filter=FunnelEventFilter(
+                                        event_name="first_open"
+                                    )
+                                ),
+                                FunnelFilterExpression(
+                                    funnel_event_filter=FunnelEventFilter(
+                                        event_name="first_visit"
+                                    )
+                                ),
+                            ]
+                        )
+                    ),
+                ),
+                FunnelStep(
+                    name="Organic visitors",
+                    filter_expression=FunnelFilterExpression(
+                        funnel_field_filter=FunnelFieldFilter(
+                            field_name="firstUserMedium",
+                            string_filter=StringFilter(
+                                match_type=StringFilter.MatchType.CONTAINS,
+                                case_sensitive=False,
+                                value="organic",
+                            ),
+                        )
+                    ),
+                ),
+                FunnelStep(
+                    name="Session start",
+                    filter_expression=FunnelFilterExpression(
+                        funnel_event_filter=FunnelEventFilter(
+                            event_name="session_start"
+                        )
+                    ),
+                ),
+                FunnelStep(
+                    name="Screen/Page view",
+                    filter_expression=FunnelFilterExpression(
+                        or_group=FunnelFilterExpressionList(
+                            expressions=[
+                                FunnelFilterExpression(
+                                    funnel_event_filter=FunnelEventFilter(
+                                        event_name="screen_view"
+                                    )
+                                ),
+                                FunnelFilterExpression(
+                                    funnel_event_filter=FunnelEventFilter(
+                                        event_name="page_view"
+                                    )
+                                ),
+                            ]
+                        )
+                    ),
+                ),
+                FunnelStep(
+                    name="Purchase",
+                    filter_expression=FunnelFilterExpression(
+                        or_group=FunnelFilterExpressionList(
+                            expressions=[
+                                FunnelFilterExpression(
+                                    funnel_event_filter=FunnelEventFilter(
+                                        event_name="purchase"
+                                    )
+                                ),
+                                FunnelFilterExpression(
+                                    funnel_event_filter=FunnelEventFilter(
+                                        event_name="in_app_purchase"
+                                    )
+                                ),
+                            ]
+                        )
+                    ),
+                ),
+            ]
+        ),
+    )
+    try:
+        response = client.run_funnel_report(request)
+        transform_response(response)
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+def transform_response(api_response):
+    dimension_headers = [header.name for header in api_response.funnel_table.dimension_headers]
+    metric_headers = [header.name for header in api_response.funnel_table.metric_headers]
+    dimensions = [[row.dimension_values[i].value for row in api_response.funnel_table.rows] for i in range(len(dimension_headers))]
+    metrics = [[row.metric_values[i].value for row in api_response.funnel_table.rows] for i in range(len(metric_headers)//2)]
+    headers = list(itertools.chain.from_iterable([dimension_headers, metric_headers[:4]]))
+    data = list(itertools.chain.from_iterable([dimensions, metrics]))
+    df = pd.DataFrame(data).transpose()
+    df.columns = headers
+
+    df.to_excel("funnel_data.xlsx", index=False, header=True)
+
+if __name__ == "__main__":
+    run_sample()
