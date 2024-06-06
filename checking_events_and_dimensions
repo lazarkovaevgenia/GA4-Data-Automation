@@ -1,0 +1,27 @@
+import os
+from google.analytics.data import BetaAnalyticsDataClient
+from google.oauth2 import service_account  # Импортируем модуль для учетных данных
+
+
+def list_metrics_and_dimensions(property_id, key_path):
+    # Установка учетных данных для доступа к GA4 API
+    credentials = service_account.Credentials.from_service_account_file(key_path)
+    client = BetaAnalyticsDataClient(credentials=credentials)
+
+    # Получение метаданных
+    metadata = client.get_metadata(name=f"properties/{property_id}/metadata")
+
+    print("Dimensions:")
+    for dimension in metadata.dimensions:
+        print(dimension.api_name)
+
+    print("\nMetrics:")
+    for metric in metadata.metrics:
+        print(metric.api_name)
+
+
+if __name__ == "__main__":
+    property_id = "326773756"
+    key_path = '/Users/lazarkovaevgenia/desktop/Rprojects/acoustic-garden-317516-a6e925691208.json'
+
+    list_metrics_and_dimensions(property_id, key_path)
