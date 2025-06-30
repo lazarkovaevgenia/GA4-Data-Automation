@@ -1,0 +1,46 @@
+import os
+from google.analytics.admin import AnalyticsAdminServiceClient
+from google.analytics.admin_v1alpha.types import ListAudiencesRequest
+from google.oauth2 import service_account
+from datetime import datetime
+
+
+def main():
+    try:
+        # 1. Authorization Settings
+        credentials_path = "/Users/admin/PycharmProjects/acoustic-garden-317516-a6e925691208.json"
+        property_id = 'properties/xxxxxxxxxx'  # Replace it with your GA4 resource ID
+
+        # 2. Client initialization
+        credentials = service_account.Credentials.from_service_account_file(credentials_path)
+        client = AnalyticsAdminServiceClient(credentials=credentials)
+
+        # 3. Creating a request
+        request = ListAudiencesRequest(
+            parent=property_id,
+            page_size=100  # Maximum number of audiences per request
+        )
+
+        # 4. Query execution and results processing
+        print(f"Uploading audiences GA4 (ресурс: {property_id})...")
+        print("-" * 60)
+
+        for audience in client.list_audiences(request=request):
+            print(f"Audience name: {audience.display_name}")
+            print(f"ID: {audience.name}")
+            print(f"Description: {audience.description or 'No description'}")
+            print(f"Number of days of activity: {audience.membership_duration_days}")
+            print(f"Event Filter: {audience.event_trigger or 'Not specified'}")
+            print("-" * 40)
+
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        print("Check it out:")
+        print("1. The path to the service account file")
+        print("2. Correctness of the GA4 resource ID")
+        print("3. Service Account Access rights")
+        print("4. Google Analytics API Availability Admin")
+
+
+if __name__ == "__main__":
+    main()
