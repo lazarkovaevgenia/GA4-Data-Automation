@@ -1,0 +1,183 @@
+import re
+import pandas as pd
+import time
+from datetime import datetime
+from google.analytics.data_v1beta import BetaAnalyticsDataClient
+from google.analytics.data_v1beta.types import (
+    RunReportRequest,
+    DateRange,
+    Dimension,
+    Metric,
+    FilterExpression,
+    Filter
+)
+from google.oauth2 import service_account
+
+# Конфигурация
+credentials_path = "/Users/admin/PycharmProjects/acoustic-garden-317516-a6e925691208.json"
+property_id = "280194443"
+output_file = "ga4_net_audiences_report.xlsx"
+REQUEST_DELAY = 2  # Задержка между запросами в секундах
+
+
+def extract_test_info(audience_name):
+    """Извлекает AB Test ID и тип вариации"""
+    test_id_match = re.search(r'ABT-(\d+)-\d+', audience_name)
+    test_id = f"ABT-{test_id_match.group(1)}" if test_id_match else None
+    variation = "Original" if "Original" in audience_name or (
+                test_id_match and audience_name.endswith("-0")) else "Variant"
+    return test_id, variation
+
+
+def get_date_range():
+    """Возвращает диапазон дат"""
+    today = datetime.today().strftime("%Y-%m-%d")
+    return DateRange(start_date="2023-01-01", end_date=today)
+
+
+def fetch_net_audiences(client):
+    """Получает список аудиторий, содержащих NET- в названии"""
+    request = RunReportRequest(
+        property=f"properties/{property_id}",
+        dimensions=[Dimension(name="audienceName")],
+        metrics=[Metric(name="totalUsers")],
+        date_ranges=[get_date_range()],
+        dimension_filter=FilterExpression(
+            filter=Filter(
+                field_name="audienceName",
+                string_filter=Filter.StringFilter(
+                    match_type="CONTAINS",
+                    value="NET-"
+                )
+            )
+        ),
+        limit=10000
+    )
+    return client.run_report(request)
+
+
+def get_batch_metrics(client, audience_names):
+    """Получает метрики для нескольких аудиторий одним запросом"""
+    request = RunReportRequest(
+        property=f"properties/{property_id}",
+        dimensions=[Dimension(name="audienceName")],
+        metrics=[
+            Metric(name="totalUsers"),
+            Metric(name="sessions"),
+            Metric(name="averageSessionDuration"),
+            Metric(name="bounceRate"),
+            Metric(name="conversions"),
+            Metric(name="totalRevenue"),
+            Metric(name="screenPageViewsPerSession")
+        ],
+        date_ranges=[get_date_range()],
+        dimension_filter=FilterExpression(
+            filter=Filter(
+                field_name="audienceName",
+                in_list_filter=Filter.InListFilter(values=audience_names)
+            )
+        ),
+        limit=10000
+    )
+    return client.run_report(request)
+
+
+def process_audience_data(audience_name, row):
+    """Обрабатывает данные аудитории"""
+    test_id, variation = extract_test_info(audience_name)
+
+    metrics = {
+        'users': int(row.metric_values[0].value),
+        'sessions': int(row.metric_values[1].value),
+        'avg_duration': float(row.metric_values[2].value),
+        'bounce_rate': float(row.metric_values[3].value),
+        'conversions': int(row.metric_values[4].value),
+        'revenue': float(row.metric_values[5].value),
+        'pages_per_session': float(row.metric_values[6].value),
+    }
+
+    minutes, seconds = divmod(metrics['avg_duration'], 60)
+    cr = metrics['conversions'] / metrics['users'] * 100 if metrics['users'] > 0 else 0
+
+    return {
+        'Audience Name': audience_name,
+        'Test ID': test_id,
+        'Variation': variation,
+        'Users': metrics['users'],
+        'Sessions': metrics['sessions'],
+        'Avg. Duration': f"{int(minutes)}m {int(seconds)}s",
+        'Bounce Rate': f"{metrics['bounce_rate']:.1%}",
+        'Conversions': metrics['conversions'],
+        'Revenue': f"${metrics['revenue']:,.2f}",
+        'CR': f"{cr:.1f}%",
+        'Pages/Session': f"{metrics['pages_per_session']:.1f}"
+    }
+
+
+def save_to_excel(data, filename):
+    """Сохраняет данные в Excel"""
+    df = pd.DataFrame(data)
+    with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
+        df.to_excel(writer, sheet_name='NET Audiences', index=False)
+
+        # Автоподбор ширины столбцов
+        worksheet = writer.sheets['NET Audiences']
+        for idx, col in enumerate(df.columns):
+            max_len = max(len(str(col)), *[len(str(v)) for v in df[col]]) + 1
+            worksheet.set_column(idx, idx, max_len)
+
+
+def main():
+    try:
+        # Инициализация клиента
+        credentials = service_account.Credentials.from_service_account_file(credentials_path)
+        client = BetaAnalyticsDataClient(credentials=credentials)
+
+        # 1. Получаем список NET-аудиторий
+        print("Получение списка NET-аудиторий...")
+        response = fetch_net_audiences(client)
+        audience_names = [row.dimension_values[0].value for row in response.rows]
+
+        if not audience_names:
+            print("NET-аудитории не найдены!")
+            return
+
+        print(f"Найдено {len(audience_names)} NET-аудиторий")
+
+        # 2. Разбиваем на группы для пакетной обработки
+        batch_size = 20
+        batches = [audience_names[i:i + batch_size] for i in range(0, len(audience_names), batch_size)]
+
+        net_audiences_data = []
+
+        for i, batch in enumerate(batches, 1):
+            print(f"Обработка группы {i}/{len(batches)} ({len(batch)} аудиторий)...")
+
+            try:
+                # Получаем метрики для группы аудиторий
+                metrics_response = get_batch_metrics(client, batch)
+
+                # Обрабатываем результаты
+                for row in metrics_response.rows:
+                    audience_name = row.dimension_values[0].value
+                    net_audiences_data.append(process_audience_data(audience_name, row))
+
+                # Задержка между запросами
+                if i < len(batches):
+                    time.sleep(REQUEST_DELAY)
+
+            except Exception as e:
+                print(f"Ошибка при обработке группы {i}: {str(e)}")
+                continue
+
+        # 3. Сохраняем в Excel
+        print("Создание отчета...")
+        save_to_excel(net_audiences_data, output_file)
+        print(f"Отчет сохранен: {output_file}")
+
+    except Exception as e:
+        print(f"Критическая ошибка: {str(e)}")
+
+
+if __name__ == "__main__":
+    main()
