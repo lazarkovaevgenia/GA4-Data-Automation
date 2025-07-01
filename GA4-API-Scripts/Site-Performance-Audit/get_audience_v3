@@ -1,0 +1,110 @@
+import re
+import pandas as pd
+from datetime import datetime
+from google.analytics.data_v1beta import BetaAnalyticsDataClient
+from google.analytics.data_v1beta.types import (
+    RunReportRequest,
+    DateRange,
+    Dimension,
+    Metric,
+    FilterExpression,
+    Filter
+)
+from google.oauth2 import service_account
+
+# Конфигурация
+credentials_path = "/Users/admin/PycharmProjects/acoustic-garden-317516-a6e925691208.json"  # Замените на ваш путь
+property_id = "280194443"       # Замените на ваш ID
+output_file = "net_audiences_raw_data.xlsx"
+REQUEST_DELAY = 2  # Задержка между запросами (секунды)
+
+def get_date_range():
+    """Возвращает диапазон дат за последние 30 дней"""
+    today = datetime.today().strftime("%Y-%m-%d")
+    thirty_days_ago = (datetime.today() - pd.Timedelta(days=30)).strftime("%Y-%m-%d")
+    return DateRange(start_date=thirty_days_ago, end_date=today)
+
+def fetch_net_audiences_raw(client):
+    """Выгружает сырые данные только для NET-аудиторий"""
+    request = RunReportRequest(
+        property=f"properties/{property_id}",
+        dimensions=[
+            Dimension(name="audienceName"),
+            Dimension(name="eventName"),
+            Dimension(name="date"),
+            Dimension(name="deviceCategory"),
+            Dimension(name="country")
+        ],
+        metrics=[
+            Metric(name="eventCount"),
+            Metric(name="totalUsers"),
+            Metric(name="conversions"),
+            Metric(name="totalRevenue")
+        ],
+        date_ranges=[get_date_range()],
+        dimension_filter=FilterExpression(
+            filter=Filter(
+                field_name="audienceName",
+                string_filter=Filter.StringFilter(
+                    match_type="CONTAINS",
+                    value="NET-"
+                )
+            )
+        ),
+        limit=100000
+    )
+    return client.run_report(request)
+
+def process_raw_data(response):
+    """Конвертирует ответ API в таблицу"""
+    raw_data = []
+    for row in response.rows:
+        raw_data.append({
+            'date': row.dimension_values[2].value,
+            'audience': row.dimension_values[0].value,
+            'event': row.dimension_values[1].value,
+            'device': row.dimension_values[3].value,
+            'country': row.dimension_values[4].value,
+            'events_count': int(row.metric_values[0].value),
+            'users': int(row.metric_values[1].value),
+            'conversions': int(row.metric_values[2].value),
+            'revenue': float(row.metric_values[3].value)
+        })
+    return pd.DataFrame(raw_data)
+
+def save_to_excel(data, filename):
+    """Сохраняет данные в Excel с автошириной столбцов"""
+    with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
+        data.to_excel(writer, sheet_name='NET Audiences Raw', index=False)
+        worksheet = writer.sheets['NET Audiences Raw']
+        for idx, col in enumerate(data.columns):
+            max_len = max(len(str(col)), *[len(str(v)) for v in data[col]]) + 1
+            worksheet.set_column(idx, idx, max_len)
+
+def main():
+    try:
+        # Инициализация клиента
+        credentials = service_account.Credentials.from_service_account_file(credentials_path)
+        client = BetaAnalyticsDataClient(credentials=credentials)
+
+        # Выгрузка данных
+        print("Загрузка сырых данных NET-аудиторий...")
+        response = fetch_net_audiences_raw(client)
+        raw_data = process_raw_data(response)
+
+        # Сохранение
+        print("Сохранение в Excel...")
+        save_to_excel(raw_data, output_file)
+        print(f"Готово! Файл сохранен как: {output_file}")
+
+        # Статистика
+        print(f"\nСтатистика выгрузки:")
+        print(f"- Всего строк: {len(raw_data)}")
+        print(f"- Уникальных аудиторий: {raw_data['audience'].nunique()}")
+        print(f"- Диапазон дат: {raw_data['date'].min()} — {raw_data['date'].max()}")
+
+    except Exception as e:
+        print(f"Ошибка: {str(e)}")
+
+if __name__ == "__main__":
+    main()
