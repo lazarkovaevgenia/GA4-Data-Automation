@@ -80,7 +80,7 @@ def get_batch_metrics(client, audience_names):
             Metric(name="sessions"),
             Metric(name="averageSessionDuration"),
             Metric(name="bounceRate"),
-            Metric(name="conversions"),
+            Metric(name="totalPurchasers"),
             Metric(name="totalRevenue"),
             Metric(name="screenPageViewsPerSession")
         ],
@@ -107,13 +107,13 @@ def process_audience_data(audience_name, row, audience_descriptions):
         'sessions': int(row.metric_values[1].value),
         'avg_duration': float(row.metric_values[2].value),
         'bounce_rate': float(row.metric_values[3].value),
-        'conversions': int(row.metric_values[4].value),
+        'totalPurchasers': int(row.metric_values[4].value),
         'revenue': float(row.metric_values[5].value),
         'pages_per_session': float(row.metric_values[6].value),
     }
 
     minutes, seconds = divmod(metrics['avg_duration'], 60)
-    cr = metrics['conversions'] / metrics['users'] * 100 if metrics['users'] > 0 else 0
+    cr = metrics['totalPurchasers'] / metrics['users'] * 100 if metrics['users'] > 0 else 0
 
     return {
         'Audience Name': audience_name,
@@ -124,7 +124,7 @@ def process_audience_data(audience_name, row, audience_descriptions):
         'Sessions': metrics['sessions'],
         'Avg. Duration': f"{int(minutes)}m {int(seconds)}s",
         'Bounce Rate': f"{metrics['bounce_rate']:.1%}",
-        'Conversions': metrics['conversions'],
+        'Conversions': metrics['totalPurchasers'],
         'Revenue': f"${metrics['revenue']:,.2f}",
         'CR': f"{cr:.1f}%",
         'Pages/Session': f"{metrics['pages_per_session']:.1f}"
