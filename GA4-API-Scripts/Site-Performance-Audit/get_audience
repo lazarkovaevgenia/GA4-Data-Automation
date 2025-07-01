@@ -46,7 +46,7 @@ def extract_variation(audience_name):
 def get_date_range():
     """Возвращает диапазон дат"""
     today = datetime.today().strftime("%Y-%m-%d")
-    return DateRange(start_date="2023-01-01", end_date=today)
+    return DateRange(start_date="2024-01-01", end_date=today)
 
 
 def fetch_net_audiences(client):
@@ -103,31 +103,31 @@ def process_audience_data(audience_name, row, audience_descriptions):
     variation = extract_variation(audience_name)
 
     metrics = {
-        'users': int(row.metric_values[0].value),
+        'totalUsers': int(row.metric_values[0].value),
         'sessions': int(row.metric_values[1].value),
-        'avg_duration': float(row.metric_values[2].value),
-        'bounce_rate': float(row.metric_values[3].value),
+        'averageSessionDuration': float(row.metric_values[2].value),
+        'bounceRate': float(row.metric_values[3].value),
         'totalPurchasers': int(row.metric_values[4].value),
-        'revenue': float(row.metric_values[5].value),
-        'pages_per_session': float(row.metric_values[6].value),
+        'totalRevenue': float(row.metric_values[5].value),
+        'screenPageViewsPerSession': float(row.metric_values[6].value),
     }
 
-    minutes, seconds = divmod(metrics['avg_duration'], 60)
-    cr = metrics['totalPurchasers'] / metrics['users'] * 100 if metrics['users'] > 0 else 0
+    minutes, seconds = divmod(metrics['averageSessionDuration'], 60)
+    cr = metrics['totalPurchasers'] / metrics['totalUsers'] * 100 if metrics['totalUsers'] > 0 else 0
 
     return {
         'Audience Name': audience_name,
         'Description': description,
         'Test ID': test_id,
         'Variation': variation,
-        'Users': metrics['users'],
+        'Users': metrics['totalUsers'],
         'Sessions': metrics['sessions'],
         'Avg. Duration': f"{int(minutes)}m {int(seconds)}s",
-        'Bounce Rate': f"{metrics['bounce_rate']:.1%}",
+        'Bounce Rate': f"{metrics['bounceRate']:.1%}",
         'Conversions': metrics['totalPurchasers'],
-        'Revenue': f"${metrics['revenue']:,.2f}",
+        'Revenue': f"${metrics['totalRevenue']:,.2f}",
         'CR': f"{cr:.1f}%",
-        'Pages/Session': f"{metrics['pages_per_session']:.1f}"
+        'Pages/Session': f"{metrics['screenPageViewsPerSession']:.1f}"
     }
 
 
