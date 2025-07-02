@@ -1,0 +1,56 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Загрузка данных из файлов
+df1 = pd.read_excel("data/ga4_net_audiences_report.xlsx")
+df2 = pd.read_excel("data/Net 32_CU.xlsx")
+df3 = pd.read_excel("data/net_audiences_full_data.xlsx")
+
+# Предварительная обработка df1 (ga4_net_audiences_report)
+# Оставляем только нужные колонки
+df1 = df1[["Test ID", "Audience Name", "Variation", "Users", "Bounce Rate", "Conversions"]]
+
+# Предварительная обработка df2 (Net 32_CU)
+# Переименовываем 'Site Section (drop down)' в 'Site Section', берем нужные колонки и удаляем дубликаты
+df2 = df2.rename(columns={'Site Section (drop down)': 'Site Section'})
+df2 = df2[['Test ID', 'Site Section']].drop_duplicates()
+
+# Предварительная обработка df3 (net_audiences_full_data)
+# Переименовываем 'events_count' в 'Events Count', берем нужные колонки
+df3 = df3.rename(columns={'events_count': 'Events Count'})
+df3 = df3[['Test ID', 'Events Count']]
+
+# Аггрегируем df3 по Test ID (суммируем Events Count)
+df3_agg = df3.groupby('Test ID', as_index=False)['Events Count'].sum()
+
+# Объединяем df1 и df2 по Test ID (левый join — df1 основа)
+merged = pd.merge(df1, df2, on='Test ID', how='left')
+
+# Объединяем с агрегированным df3_agg по Test ID
+merged = pd.merge(merged, df3_agg, on='Test ID', how='left')
+
+# Заполняем пропуски в Bounce Rate, Conversions и Events Count нулями
+merged['Bounce Rate'] = merged['Bounce Rate'].fillna(0)
+merged['Conversions'] = merged['Conversions'].fillna(0)
+merged['Events Count'] = merged['Events Count'].fillna(0)
+
+# Итоговый датафрейм с нужными колонками
+final_cols = ['Test ID', 'Audience Name', 'Site Section', 'Variation', 'Users', 'Events Count', 'Bounce Rate', 'Conversions']
+final_df = merged[final_cols]
+
+# Сохраняем результат в Excel
+final_df.to_excel("combined_test_results.xlsx", index=False)
+
+print("Пример результата:")
+print(final_df.head())
+
+# Визуализация топ-10 тестов по количеству пользователей
+top_tests = final_df.groupby(['Test ID', 'Audience Name'], as_index=False)['Users'].sum().nlargest(10, 'Users')
+
+plt.figure(figsize=(12, 6))
+sns.barplot(data=top_tests, x='Test ID', y='Users', hue='Audience Name', dodge=False)
+plt.title('Top 10 tests by Users')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
