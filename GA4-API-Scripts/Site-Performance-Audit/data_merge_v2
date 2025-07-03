@@ -1,0 +1,112 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pathlib import Path
+
+# --- Загрузка данных из файлов ---
+file1 = Path("data/ga4_net_audiences_report.xlsx")
+file2 = Path("data/Net 32_CU.xlsx")
+file3 = Path("data/net_audiences_full_data.xlsx")
+
+# Проверяем существование файлов
+for f_path in [file1, file2, file3]:
+    if not f_path.exists():
+        print(f"Ошибка: Файл не найден по пути: {f_path}. Проверьте путь и наличие файла.")
+        exit()
+
+try:
+    df1 = pd.read_excel(file1)
+    df2 = pd.read_excel(file2)
+    df3 = pd.read_excel(file3)
+except Exception as e:
+    print(f"Ошибка при чтении Excel файла: {e}")
+    exit()
+
+# --- Предварительная обработка df1 (ga4_net_audiences_report) ---
+required_cols_df1 = ["Test ID", "Audience Name", "Variation", "Users", "Bounce Rate", "Conversions"]
+df1 = df1.loc[:, required_cols_df1]
+
+# --- Предварительная обработка df2 (Net 32_CU) ---
+df2 = df2.groupby('Test ID')['Site Section'].agg(lambda x: ', '.join(x.astype(str))).reset_index()
+
+# --- Предварительная обработка df3 (net_audiences_full_data) ---
+# Переименовываем 'events_count' в 'Events Count'
+df3 = df3.rename(columns={'events_count': 'Events Count'})
+
+# Убедимся, что 'Test ID' имеет одинаковый тип данных во всех DataFrame
+df1['Test ID'] = df1['Test ID'].astype(str)
+df2['Test ID'] = df2['Test ID'].astype(str)
+df3['Test ID'] = df3['Test ID'].astype(str)
+
+# --- Агрегация df3 по Test ID (суммируем Events Count) ---
+df3_agg_events_count = df3.groupby('Test ID', as_index=False)['Events Count'].sum()
+
+# --- Новая логика: подсчет add_to_cart, begin_checkout, purchase ---
+event_metrics = ['add_to_cart', 'begin_checkout', 'purchase']
+df3_event_counts = pd.DataFrame(df3['Test ID'].unique(), columns=['Test ID']) # Создаем основу для слияния
+
+for event_name in event_metrics:
+    # Фильтруем df3 по текущему типу события
+    filtered_events = df3[df3['event'] == event_name]
+    # Считаем количество таких событий для каждого Test ID
+    event_counts = filtered_events.groupby('Test ID').size().reset_index(name=event_name)
+    # Объединяем с общей таблицей событий
+    df3_event_counts = pd.merge(df3_event_counts, event_counts, on='Test ID', how='left')
+
+# Заполняем NaN нулями для новых колонок (если Test ID не имел таких событий)
+for event_name in event_metrics:
+    if event_name in df3_event_counts.columns:
+        df3_event_counts[event_name] = df3_event_counts[event_name].fillna(0).astype(int)
+
+# --- Объединение DataFrame ---
+# Объединяем df1 и df2 по Test ID (левый join — df1 основа)
+merged_df = pd.merge(df1, df2, on='Test ID', how='left')
+
+# Объединяем с агрегированным df3_agg_events_count по Test ID
+merged_df = pd.merge(merged_df, df3_agg_events_count, on='Test ID', how='left')
+
+# Объединяем с новыми колонками по количеству событий
+merged_df = pd.merge(merged_df, df3_event_counts, on='Test ID', how='left')
+
+
+# Заполняем пропуски в Bounce Rate, Conversions, Events Count и новых метриках нулями
+numeric_cols_to_fill = ['Bounce Rate', 'Conversions', 'Events Count'] + event_metrics
+for col in numeric_cols_to_fill:
+    if col in merged_df.columns:
+        merged_df[col] = merged_df[col].fillna(0)
+        # Для счетчиков событий, убедимся, что они int
+        if col in event_metrics:
+            merged_df[col] = merged_df[col].astype(int)
+
+
+# Итоговый датафрейм с нужными колонками (добавляем новые метрики)
+final_cols = [
+    'Test ID', 'Audience Name', 'Site Section', 'Variation', 'Users',
+    'Events Count', 'Bounce Rate', 'Conversions'
+] + event_metrics # Добавляем новые колонки
+final_df = merged_df[final_cols]
+
+# --- Сохранение результата в Excel ---
+output_file = Path("combined_test_results.xlsx")
+try:
+    final_df.to_excel(output_file, index=False)
+    print(f"Результат сохранен в файл: {output_file.resolve()}")
+except Exception as e:
+    print(f"Ошибка при сохранении Excel файла: {e}")
+
+print("\nПример результата:")
+print(final_df.head())
+
+# --- Визуализация топ-10 тестов по количеству пользователей (оставляем без изменений) ---
+top_tests = final_df.groupby(['Test ID', 'Audience Name'], as_index=False)['Users'].sum().nlargest(10, 'Users')
+
+plt.figure(figsize=(12, 6))
+sns.barplot(data=top_tests, x='Test ID', y='Users', hue='Audience Name', dodge=False)
+plt.title('Топ 10 тестов по количеству пользователей', fontsize=16)
+plt.xlabel('ID Теста', fontsize=12)
+plt.ylabel('Количество пользователей', fontsize=12)
+plt.xticks(rotation=45, ha='right')
+plt.legend(title='Название Аудитории', bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.grid(axis='y', linestyle='--', alpha=0.7)
+plt.tight_layout()
+plt.show()
