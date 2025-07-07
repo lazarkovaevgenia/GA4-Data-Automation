@@ -1,0 +1,107 @@
+import pandas as pd
+from pathlib import Path
+
+# Конфигурация путей
+FILE_PATHS = {
+    'ga4': Path("data/ga4_net_audiences_report.xlsx"),
+    'net32': Path("data/Net 32_CU.xlsx"),
+    'events': Path("data/net_audiences_full_data.xlsx")
+}
+
+
+def load_and_process():
+    # 1. Загрузка данных
+    df_ga4 = pd.read_excel(FILE_PATHS['ga4'])
+    df_net32 = pd.read_excel(FILE_PATHS['net32'])
+    df_events = pd.read_excel(FILE_PATHS['events'])
+
+    # 2. Предварительная обработка GA4
+    ga4_cols = ["Test ID", "Audience Name", "Variation", "Users", "Bounce Rate", "Conversions"]
+    df_ga4 = df_ga4[ga4_cols]
+    df_ga4['Test ID'] = df_ga4['Test ID'].astype(str).str.strip()
+
+    # 3. Предварительная обработка Net32
+    # Выбираем только нужные колонки
+    net32_cols = ['Test ID', 'Site Section', '(R) Main KPI Uplift %']
+
+    # Проверяем наличие колонки Test ID
+    if 'Test ID' not in df_net32.columns:
+        raise ValueError("Колонка 'Test ID' отсутствует в файле Net 32_CU.xlsx")
+
+    df_net32 = df_net32[net32_cols].copy()
+    df_net32['Test ID'] = df_net32['Test ID'].astype(str).str.strip()
+    df_net32 = df_net32.drop_duplicates(subset=['Test ID'])
+
+    # 4. Обработка событий
+    df_events = df_events.rename(columns={'events_count': 'Events Count'})
+    df_events['Test ID'] = df_events['Test ID'].astype(str).str.strip()
+
+    # 5. Объединение данных
+    # Сначала объединяем GA4 с Net32
+    merged = pd.merge(
+        df_ga4,
+        df_net32,
+        on='Test ID',
+        how='left',
+        validate='many_to_one'  # Проверка соответствия
+    )
+
+    # Затем добавляем данные о событиях
+    event_types = ['add_to_cart', 'begin_checkout', 'purchase']
+    events_agg = df_events.groupby('Test ID')['Events Count'].sum().reset_index()
+
+    for event in event_types:
+        event_counts = df_events[df_events['event'] == event].groupby('Test ID').size().reset_index(name=event)
+        events_agg = pd.merge(events_agg, event_counts, on='Test ID', how='left')
+
+    final_df = pd.merge(
+        merged,
+        events_agg,
+        on='Test ID',
+        how='left'
+    )
+
+    # 6. Заполнение пропущенных значений
+    final_df['Site Section'] = final_df['Site Section'].fillna('Не указано')
+    final_df['(R) Main KPI Uplift %'] = final_df['(R) Main KPI Uplift %'].fillna(0)
+    for event in event_types:
+        final_df[event] = final_df[event].fillna(0).astype(int)
+
+    return final_df
+
+
+def save_results(df):
+    output_cols = [
+        'Test ID', 'Audience Name', 'Variation', 'Users',
+        'Bounce Rate', 'Conversions', 'Events Count',
+        'Site Section', '(R) Main KPI Uplift %',
+        'add_to_cart', 'begin_checkout', 'purchase'
+    ]
+
+    output_file = Path("final_combined_report.xlsx")
+    df[output_cols].to_excel(output_file, index=False)
+    print(f"Файл сохранен: {output_file.resolve()}")
+
+
+if __name__ == "__main__":
+    try:
+        print("Начало обработки данных...")
+        result = load_and_process()
+
+        # Диагностика
+        print("\nПроверка данных:")
+        print(f"Всего строк: {len(result)}")
+        print(f"Пример Test ID: {result['Test ID'].iloc[0]}")
+        print(f"Заполнено Site Section: {result['Site Section'].notna().sum()} строк")
+        print(f"Заполнено KPI Uplift: {result['(R) Main KPI Uplift %'].notna().sum()} строк")
+
+        save_results(result)
+        print("\nОбработка успешно завершена!")
+    except Exception as e:
+        print(f"\nОшибка: {str(e)}")
+        print("Рекомендации:")
+        print("1. Проверьте наличие колонки 'Test ID' во всех файлах")
+        print("2. Убедитесь, что значения Test ID совпадают между файлами")
+        print("3. Проверьте примеры значений:")
+        print("   GA4 Test ID пример:", pd.read_excel(FILE_PATHS['ga4'])['Test ID'].iloc[0])
+        print("   Net32 Test ID пример:", pd.read_excel(FILE_PATHS['net32'])['Test ID'].iloc[0])
