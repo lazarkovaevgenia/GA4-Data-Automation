@@ -1,0 +1,142 @@
+import re
+import pandas as pd
+from datetime import datetime
+from google.analytics.data_v1beta import BetaAnalyticsDataClient
+from google.analytics.data_v1beta.types import (
+    RunReportRequest,
+    DateRange,
+    Dimension,
+    Metric,
+    FilterExpression,
+    Filter
+)
+from google.analytics.admin import AnalyticsAdminServiceClient
+from google.oauth2 import service_account
+
+# Конфигурация
+credentials_path = "/Users/admin/PycharmProjects/acoustic-garden-317516-a6e925691208.json"  # Замените на ваш путь
+property_id = "280194443"  # Замените на ваш ID
+output_file = "net_audiences_full_data.xlsx"
+
+
+def get_audience_test_ids(credentials, property_id):
+    """Получает test_id для всех NET-аудиторий из их описаний"""
+    admin_client = AnalyticsAdminServiceClient(credentials=credentials)
+    audiences = admin_client.list_audiences(parent=f"properties/{property_id}")
+
+    test_ids = {}
+    for aud in audiences:
+        if "NET-" not in aud.display_name:
+            continue
+
+        # Извлекаем ABT-123 из описания
+        test_id = None
+        if aud.description:
+            match = re.search(r"ABT-(\d+)", aud.description)
+            if match:
+                test_id = match.group(1)
+
+        # Если в описании нет, пробуем из названия
+        if not test_id:
+            match = re.search(r"ABT-(\d+)", aud.display_name)
+            if match:
+                test_id = match.group(1)
+
+        test_ids[aud.display_name] = test_id
+
+    return test_ids
+
+
+def fetch_net_audiences_raw(client):
+    """Выгружает все события для NET-аудиторий"""
+    request = RunReportRequest(
+        property=f"properties/{property_id}",
+        dimensions=[
+            Dimension(name="audienceName"),
+            Dimension(name="eventName"),
+            Dimension(name="date"),
+            Dimension(name="deviceCategory")
+        ],
+        metrics=[Metric(name="eventCount")],
+        date_ranges=[DateRange(start_date="2020-01-01", end_date="today")],
+        dimension_filter=FilterExpression(
+            filter=Filter(
+                field_name="audienceName",
+                string_filter=Filter.StringFilter(
+                    match_type="CONTAINS",
+                    value="NET-"
+                )
+            )
+        ),
+        limit=100000
+    )
+    return client.run_report(request)
+
+
+def process_raw_data(response, test_ids):
+    """Обрабатывает данные, ставя test_id на первое место"""
+    raw_data = []
+    for row in response.rows:
+        audience_name = row.dimension_values[0].value
+        raw_data.append({
+            'test_id': test_ids.get(audience_name),  # Первая колонка
+            'audience': audience_name,
+            'date': row.dimension_values[2].value,
+            'event': row.dimension_values[1].value,
+            'device': row.dimension_values[3].value,
+            'events_count': int(row.metric_values[0].value)
+        })
+    return pd.DataFrame(raw_data)
+
+
+def save_to_excel(data, filename):
+    """Сохраняет с test_id в первой колонке"""
+    columns_order = ['test_id', 'audience', 'date', 'event', 'device', 'events_count']
+    with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
+        data[columns_order].to_excel(writer, index=False)
+
+        # Автоподбор ширины колонок
+        worksheet = writer.sheets['Sheet1']
+        for idx, col in enumerate(columns_order):
+            max_len = max(len(str(col)), *[len(str(v)) for v in data[col]]) + 1
+            worksheet.set_column(idx, idx, max_len)
+
+
+def main():
+    try:
+        # Инициализация клиента
+        credentials = service_account.Credentials.from_service_account_file(credentials_path)
+        client = BetaAnalyticsDataClient(credentials=credentials)
+
+        # Получаем test_id для всех NET-аудиторий
+        print("Получение test_id из описаний аудиторий...")
+        test_ids = get_audience_test_ids(credentials, property_id)
+
+        # Выгрузка сырых данных
+        print("Выгрузка событий для NET-аудиторий...")
+        response = fetch_net_audiences_raw(client)
+        raw_data = process_raw_data(response, test_ids)
+
+        # Проверка на отсутствующие test_id
+        missing_ids = raw_data[raw_data['test_id'].isnull()]
+        if not missing_ids.empty:
+            print(f"Внимание: Для {len(missing_ids)} аудиторий не найден test_id!")
+            print("Примеры:", missing_ids['audience'].unique()[:5])
+
+        # Сохранение
+        print("Сохранение в Excel...")
+        save_to_excel(raw_data, output_file)
+        print(f"Готово! Файл сохранен как: {output_file}")
+
+        # Статистика
+        print("\nСтатистика выгрузки:")
+        print(f"- Всего строк: {len(raw_data)}")
+        print(f"- Уникальных тестов: {raw_data['test_id'].nunique()}")
+        print(f"- Уникальных событий: {raw_data['event'].nunique()}")
+
+    except Exception as e:
+        print(f"Критическая ошибка: {str(e)}")
+
+
+if __name__ == "__main__":
+    main()
