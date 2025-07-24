@@ -1,0 +1,67 @@
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# Загрузка данных
+df_ga4_base = pd.read_csv("data/ga4_test_audiences_base.csv")       # Базовые метрики GA4
+df_ga4_events = pd.read_csv("data/ga4_test_audiences_events.csv")   # События GA4
+df_clickup = pd.read_excel("data/Net 32_CU.xlsx")                   # Данные из ClickUp
+
+# --- 1. Обработка базовых метрик GA4 ---
+# Группируем по test_id и audience, сохраняя все метрики
+df_ga4_agg = df_ga4_base.groupby(['test_id', 'audience'], as_index=False).agg({
+    'users': 'sum',
+    'sessions': 'sum',
+    'conversions': 'sum',
+    'add_to_cart': 'sum',
+    'checkouts': 'sum',
+    'revenue': 'sum',
+    'avg_session_duration': 'mean',
+    'bounce_rate': 'mean'
+}).rename(columns={
+    'test_id': 'Test ID',
+    'audience': 'Audience Name'
+})
+
+# --- 2. Обработка событий GA4 ---
+# Преобразуем в "широкий" формат (одна строка = один test_id + audience)
+df_events_pivot = df_ga4_events.pivot_table(
+    index=['test_id', 'audience'],
+    columns='event',
+    values='count',
+    aggfunc='sum',
+    fill_value=0
+).reset_index().rename(columns={
+    'test_id': 'Test ID',
+    'audience': 'Audience Name'
+})
+
+# --- 3. Объединение данных GA4 ---
+merged_ga4 = pd.merge(df_ga4_agg, df_events_pivot, on=['Test ID', 'Audience Name'], how='left')
+
+# --- 4. Обработка данных ClickUp ---
+# Удаляем дубликаты Test ID (если есть) и ненужные колонки
+df_clickup = df_clickup.drop_duplicates(subset=['Test ID'])
+clickup_cols = [
+    'Test ID', 'Task Name', 'Status', 'Hypothesis', 'Primary Metric',
+    'Traffic allocation', 'Monitoring Metrics', 'Main KPI Uplift %',
+    'Client', 'NET Targeting', 'Site Section', 'number of running days', 'stopped on'
+]
+df_clickup = df_clickup[clickup_cols]
+
+# --- 5. Объединение с ClickUp ---
+# Сначала добавляем данные ClickUp к GA4, игнорируя Audience Name
+final_df = pd.merge(
+    merged_ga4,
+    df_clickup,
+    on='Test ID',
+    how='left'
+)
+
+# --- 6. Сохранение результата ---
+output_file = "full_ga4_cu_merged_data_fixed.xlsx"
+final_df.to_excel(output_file, index=False)
+
+print("Файл сохранен:", output_file)
+print("\nПример данных:")
+print(final_df[['Test ID', 'Audience Name', 'Task Name', 'Status']].head(10))
